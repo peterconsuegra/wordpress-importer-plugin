@@ -1,0 +1,27 @@
+{
+    "name": "peteconsuegra/wordpress-importer-plugin",
+    "description": "Import WordPress plugin for WordPress Pete",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Pedro Consuegra",
+            "email": "software@ozonegroup.co"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "Pete\\WordPressImporter\\": "src/"
+        }
+    },
+    "minimum-stability": "dev",
+    "require": {
+        "illuminate/support": "~5"
+    },
+	"extra": {
+	    "laravel": {
+	        "providers": [
+	            "Pete\\WordPressImporter\\WordPressImporterServiceProvider"
+	        ]
+	    }
+	}
+}
