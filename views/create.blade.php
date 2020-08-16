@@ -1,17 +1,24 @@
 @extends('layout')
 
 @section('header')
-<div class="page-header">
-	<h4>Import WordPress</h4>
-	
-	<div id="loading_area"></div>
-	
-</div>
+
 	
 @endsection
 
 @section('content')
 @include('error')
+
+
+	<div class="row">
+		<div class="col-md-12">
+				<div class="page-header">
+						<h4>Import WordPress</h4>
+	
+						<div id="loading_area"></div>
+	
+				</div>
+		</div>
+	</div>
 	
 <form action="/import_wordpress/store" id ="SiteForm" method="POST" enctype="multipart/form-data">
 
