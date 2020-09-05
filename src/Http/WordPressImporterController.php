@@ -12,10 +12,20 @@ use App\PeteOption;
 use Validator;
 use Illuminate\Support\Facades\Redirect;
 use Log;
+use View;
 
 class WordPressImporterController extends Controller
 {
   	
+	public function __construct(Request $request){
+	        
+	       	$this->middleware('auth');
+			$input = $request->all();
+			$dashboard_url = env("DASHBOARD_URL");
+			$viewsw = "/import_wordpress";
+			View::share(compact('dashboard_url','viewsw'));	
+	 }
+	
 	public function create(){
 		
 		$num = substr(PHP_VERSION, 0, 3);
@@ -25,8 +35,8 @@ class WordPressImporterController extends Controller
         	return redirect('sites/create')->withErrors("The PHP version must be >= 7.1 to activate WordPress Plus Laravel functionality.");
 		}
 		
-		$viewsw = "/import_wordpress";
-		return view("wordpress-importer-plugin::create")->with('viewsw',$viewsw);
+		//return view("wordpress-importer-plugin::create")->with('viewsw',$viewsw);
+		return view("wordpress-importer-plugin::create");
 	}
 	
 	
