@@ -12,9 +12,7 @@
 	<div class="row">
 		<div class="col-md-12">
 				<div class="page-header">
-						<h4>Import WordPress</h4>
-	
-						<div id="loading_area"></div>
+						<h3>Import WordPress Instance</h3>
 	
 				</div>
 		</div>
@@ -81,7 +79,7 @@
 									
 									
 			<div class="form-group" id="zip_file_url_div" >
-				<label for="zip_file_url-field">Upload Pete tar.gz file</label>
+				<label for="zip_file_url-field">WordPress Pete file</label>
 				<input type="file" id="filem" name="filem">
 			</div>
 						
