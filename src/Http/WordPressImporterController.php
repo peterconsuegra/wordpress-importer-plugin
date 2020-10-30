@@ -20,6 +20,7 @@ class WordPressImporterController extends Controller
 	public function __construct(Request $request){
 	    
 	    $this->middleware('auth');
+		
 		$dashboard_url = env("DASHBOARD_URL");
 		$viewsw = "/sites";
 		
@@ -33,12 +34,14 @@ class WordPressImporterController extends Controller
 		$system_vars = parent::__construct();
 		$pete_options = $system_vars["pete_options"];
 		$sidebar_options = $system_vars["sidebar_options"];
-		$current_user = Auth::user(); 
-		View::share(compact('dashboard_url','viewsw','pete_options','system_vars','sidebar_options','current_user'));
-		   
+		
+		View::share(compact('dashboard_url','viewsw','pete_options','system_vars','sidebar_options'));
+		
 	}
   	
 	public function create(){
+		
+		Log::info("entro en create WordPressImporterController");
 		
 		$num = substr(PHP_VERSION, 0, 3);
 		$float_version = (float)$num;
@@ -46,9 +49,9 @@ class WordPressImporterController extends Controller
 		if($float_version < 7.1){
         	return redirect('sites/create')->withErrors("The PHP version must be >= 7.1 to activate WordPress Plus Laravel functionality.");
 		}
-		
+		$current_user = Auth::user(); 
 		$viewsw = "/import_wordpress";
-		return view("wordpress-importer-plugin::create")->with('viewsw',$viewsw);
+		return view("wordpress-importer-plugin::create",compact('viewsw','current_user'));
 	}
 	
 	
