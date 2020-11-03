@@ -41,14 +41,6 @@ class WordPressImporterController extends Controller
   	
 	public function create(){
 		
-		Log::info("entro en create WordPressImporterController");
-		
-		$num = substr(PHP_VERSION, 0, 3);
-		$float_version = (float)$num;
-		
-		if($float_version < 7.1){
-        	return redirect('sites/create')->withErrors("The PHP version must be >= 7.1 to activate WordPress Plus Laravel functionality.");
-		}
 		$current_user = Auth::user(); 
 		$viewsw = "/import_wordpress";
 		return view("wordpress-importer-plugin::create",compact('viewsw','current_user'));
@@ -94,6 +86,14 @@ class WordPressImporterController extends Controller
 	        		->withErrors($validator)
 	        			->withInput();
      	 }
+		 
+		$size = $request->file('filem')->getSize();	
+		$file_size = number_format($size / 1048576,2);
+		Log::info($file_size.' MB');	
+		
+		if($file_size > 450){
+			return Redirect::to('/import_wordpress')->withErrors(['msg' => 'This file exceeds the size (450MB) limit for an http post request please try the option: File path for large files (Optional)']);
+		}
 		
 		if($request->file('filem')!= ""){
 			
