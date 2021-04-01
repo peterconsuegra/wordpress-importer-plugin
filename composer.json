@@ -17,6 +17,12 @@
     "require": {
         "illuminate/support": "~5"
     },
+	"repositories":[
+	    {
+	        "type": "vcs",
+	        "url": "https://github.com/peterconsuegra/wordpress-importer-plugin.git"
+	    }
+	],
 	"extra": {
 	    "laravel": {
 	        "providers": [
