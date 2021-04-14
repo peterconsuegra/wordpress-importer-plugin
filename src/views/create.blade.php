@@ -77,20 +77,13 @@
 	<div class="row">
 		<div class="col-md-12">
 									
-									
-			<div class="form-group" id="zip_file_url_div" >
-				<label for="zip_file_url-field">WordPress Pete file</label>
-				<input type="file" id="filem" name="filem">
-			</div>
-						
-			<div id="big_file_container"><input type="checkbox" id="big_file" name="url_template"  value="true"> &nbsp; File path for large files (Optional)</div>
-							
+				<p>WordPress Pete file path</p>			
 			@if($pete_options->get_meta_value('os_distribution') == "docker")		
-				<i id="label_big_file_container" style="display: none;">Insert the complete route to Pete tar.gz file, note that if you are using docker this is docker_files/public_html/my_site.tar.gz and the path is /var/www/html/my_site.tar.gz when you import</i>
+				<p><i id="label_big_file_container">Copy and paste the WordPress Pete file in the path of the volume shared with docker: wordpress-pete-docker/public_html/my_site.tar.gz, after this restart the docker and note that the path in this field will be: /var/www/html/my_site.tar.gz</i></p>
 			@else
-				<label id="label_big_file_container" style="display: none;">Insert the complete route to Pete tar.gz file</label>
+				<label id="label_big_file_container">Insert the complete route to Pete tar.gz file</label>
 			@endif
-			<input type="text" id="big_file_route" name="big_file_route" style="display: none;" class="form-control"/>
+			<input type="text" id="big_file_route" name="big_file_route"class="form-control"/>
 				
 			<br/>
 					
