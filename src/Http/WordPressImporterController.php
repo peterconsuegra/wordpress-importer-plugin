@@ -88,14 +88,17 @@ class WordPressImporterController extends Controller
      	 }
 		
 		if($request->file('filem')!= ""){
-
+			
+			/*
 			$size = $request->file('filem')->getSize();	
+			
 			$file_size = number_format($size / 1048576,2);
 			Log::info($file_size.' MB');	
 		
 			if($file_size > 450){
 				return Redirect::to('/import_wordpress')->withErrors(['msg' => 'This file exceeds the size (450MB) limit for an http post request please try the option: File path for large files (Optional)']);
 			}
+			*/
 			
 			$file = $request->file('filem');
 	        // SET UPLOAD PATH
