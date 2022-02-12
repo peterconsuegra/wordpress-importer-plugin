@@ -12,7 +12,7 @@
 	<div class="row">
 		<div class="col-md-12">
 				<div class="page-header">
-						<h3>Import WordPress Instance</h3>
+						<h3>Import WordPress Instancexx</h3>
 	
 				</div>
 		</div>
@@ -23,19 +23,6 @@
 	<input type="hidden" name="_token" value="{{ csrf_token() }}">						 
 	
 	
-	<div class="row">
-		<div class="col-md-12">
-												
-			<div class="form-group" id="name_div">
-				<p> Project name</p>
-				<input type="text" id="name-field" name="name" class="form-control" value="{{ old("name") }}" required/>
-                   
-				<div id="name_error_area"> 
-				</div>
-			</div>
-				
-		</div>
-	</div>
 	
 	
 	@if($pete_options->get_meta_value('domain_template'))

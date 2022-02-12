@@ -50,8 +50,7 @@ class WordPressImporterController extends Controller
 	
 	public function store(Request $request)
 	{
-		Log::info("entro en store de WordPressImporterController");
-		
+
 		$pete_options = new PeteOption();
 		$user = Auth::user();
 		$fields_to_validator = $request->all();
@@ -61,13 +60,11 @@ class WordPressImporterController extends Controller
 		$site->user_id = $user->id;
 		$site->app_name = $request->input("app_name");
 		$site->action_name = "Import";
-		
-		$site->name = $request->input("name");
 		$site->to_import_project = $request->input("to_import_project");
 		$site->user_id = $user->id;
 		$site->url = $request->input("url");
+		$site->set_project_name($site->url);
 		$site->big_file_route = $request->input("big_file_route");
-		$site->laravel_version = $request->input("selected_version");	
 		
 		$app_root = $pete_options->get_meta_value('app_root');
 		if($pete_options->get_meta_value('domain_template')){
@@ -75,6 +72,7 @@ class WordPressImporterController extends Controller
 			$site->url = $site->url . "." . $pete_options->get_meta_value('domain_template');
 		}
 		
+		$fields_to_validator["name"] = $site->name;
 		$validator = Validator::make($fields_to_validator, [
 			'name' =>  array('required', 'regex:/^[a-zA-Z0-9-_]+$/','unique:sites'),
 			'url' => 'required|unique:sites',
