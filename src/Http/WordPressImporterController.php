@@ -62,15 +62,9 @@ class WordPressImporterController extends Controller
 		$site->action_name = "Import";
 		$site->to_import_project = $request->input("to_import_project");
 		$site->user_id = $user->id;
-		$site->url = $request->input("url");
+		$site->set_url($request->input("url"));
 		$site->set_project_name($site->url);
 		$site->big_file_route = $request->input("big_file_route");
-		
-		$app_root = $pete_options->get_meta_value('app_root');
-		if($pete_options->get_meta_value('domain_template')){
-	
-			$site->url = $site->url . "." . $pete_options->get_meta_value('domain_template');
-		}
 		
 		$fields_to_validator["name"] = $site->name;
 		$validator = Validator::make($fields_to_validator, [
