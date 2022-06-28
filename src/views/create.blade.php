@@ -33,7 +33,7 @@
 						
 			<div id="url_div">
 				<p>URL</p>
-				<input type="text" id="url-field" name="url" class="inline_class url_wordpress_laravel" required/>
+				<input type="text" id="url-field" name="url" class="inline_class url_wordpress_laravel"/>
 				<div id="url_wordpress_helper" class="inline_class">.{{$pete_options->get_meta_value('domain_template')}}</div>
 				 
 			</div>
