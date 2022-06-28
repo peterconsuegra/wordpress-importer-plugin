@@ -88,7 +88,8 @@ class WordPressImporterController extends Controller
 		["template" => $template_file,
 		"theme" => "custom", 
 		"user_id" => $current_user->id, 
-		"site_url" => $site->url
+		"site_url" => $site->url,
+		"action_name" => "Import"
 		],$request_array);
 		
 		$site->import_wordpress($import_params);
