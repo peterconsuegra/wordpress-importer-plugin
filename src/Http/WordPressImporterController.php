@@ -6,7 +6,6 @@ namespace Pete\WordPressImporter\Http;
 use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Auth;
 use App\Site;
-use Input;
 use Illuminate\Http\Request;
 use App\PeteOption;
 use Validator;
