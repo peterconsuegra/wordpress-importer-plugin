@@ -70,7 +70,8 @@ class WordPressImporterController extends Controller
 				 // RENAME THE UPLOAD WITH RANDOM NUMBER
 				//$fileName = rand(11111, 99999) . '.' . $extension;
 				 // MOVE THE UPLOADED FILES TO THE DESTINATION DIRECTORY
-				$originalName =  $file->getClientOriginalName();
+				//$originalName =  $file->getClientOriginalName();
+				$originalName = rand(11111, 99999) . '.' . $extension;
 				$upload_success = $file->move($destinationPath, $originalName);
 			}
 			
