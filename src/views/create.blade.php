@@ -13,6 +13,8 @@
 		<div class="col-md-12">
 				<div class="page-header">
 						<h3>Import WordPress Instance</h3>
+						
+						<label>Make sure you have PHP version 7.4 active when importing a site to get better performance</label>
 	
 				</div>
 		</div>
