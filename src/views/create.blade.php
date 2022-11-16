@@ -14,7 +14,7 @@
 				<div class="page-header">
 						<h3>Import WordPress Instance</h3>
 						
-						<label>Make sure you have PHP version 7.4 active when importing a site to get better performance</label>
+						<label>We recommend using PHP 8.0 or 8.1 only with WordPress 5.6 or higher for compatibility</label>
 	
 				</div>
 		</div>
