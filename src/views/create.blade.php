@@ -13,6 +13,8 @@
 		<div class="col-md-12">
 				<div class="page-header">
 						<h3>Import WordPress Instance</h3>
+						
+						<label>Use PHP 8.0 or 8.1 with WordPress 5.9 or 6.0 for compatibility and better performance.</label>
 	
 				</div>
 		</div>
