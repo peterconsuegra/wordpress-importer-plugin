@@ -8,3 +8,6 @@
 [remote "origin"]
 	url = https://github.com/peterconsuegra/wordpress-importer-plugin.git
 	fetch = +refs/heads/*:refs/remotes/origin/*
+[branch "master"]
+	remote = origin
+	merge = refs/heads/master
