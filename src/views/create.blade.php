@@ -31,6 +31,8 @@
 		<div class="col-md-12">
 
 			<p>Adjust your system's upload capacity. <a href="/phpinfo_panel">[Learn more]</a></p>
+
+			<p>Temporarily disable security to upload your WordPress site. Remember to re-enable it once the process is complete. <a href="/security">[Learn more]</a></p>
 						
 			<div id="url_div">
 				<p>URL</p>
