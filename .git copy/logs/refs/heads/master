@@ -1,6 +1,0 @@
-0000000000000000000000000000000000000000 f70e23b58497bf8937e3c9219e8faf23642d15cc Pedro Consuegra <pedroconsuegrat@gmail.com> 1644754738 -0500	clone: from https://github.com/peterconsuegra/wordpress-importer-plugin.git
-f70e23b58497bf8937e3c9219e8faf23642d15cc 1ee23f818a026b565040ac837cf6c601df2ae31f Pedro Consuegra <pedroconsuegrat@gmail.com> 1657565683 -0500	pull origin master: Fast-forward
-1ee23f818a026b565040ac837cf6c601df2ae31f 72d0dcd00f99869ff1233411f4954dfe4a6cd219 Pedro Consuegra <pedroconsuegrat@gmail.com> 1657565791 -0500	commit: remove illuminate support
-72d0dcd00f99869ff1233411f4954dfe4a6cd219 f53b69faf7ce0d393df018b57b9e61c47ed35c97 Pedro Consuegra <pedroconsuegrat@gmail.com> 1657566117 -0500	commit: working in laravel 8
-f53b69faf7ce0d393df018b57b9e61c47ed35c97 d57b92f07adabecf18ab39d1c71b8e1d257ac8d1 Pedro Consuegra <pedroconsuegrat@gmail.com> 1742057522 -0500	commit: llll
-d57b92f07adabecf18ab39d1c71b8e1d257ac8d1 5981829d49e62fc61909efe390f9cc62a13f7d72 Pedro Consuegra <pedroconsuegrat@gmail.com> 1742057532 -0500	pull origin master: Merge made by the 'recursive' strategy.
