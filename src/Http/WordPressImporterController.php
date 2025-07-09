@@ -3,99 +3,101 @@
 
 namespace Pete\WordPressImporter\Http;
 
-use App\Http\Controllers\Controller;
+use App\Http\Controllers\PeteController;
 use Illuminate\Support\Facades\Auth;
 use App\Site;
 use Illuminate\Http\Request;
-use App\PeteOption;
 use Validator;
 use Illuminate\Support\Facades\Redirect;
 use Log;
 use View;
 
-class WordPressImporterController extends Controller
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
+use Illuminate\Http\UploadedFile;
+
+class WordPressImporterController extends PeteController
 {
 	
-	public function __construct(Request $request){
-	    
-	    $this->middleware('auth');
-		
-		$dashboard_url = env("PETE_DASHBOARD_URL");
-		$viewsw = "/sites";
-		
-		//DEBUGING PARAMS
-		$debug = env('PETE_DEBUG');
-		if($debug == "active"){
-			$inputs = $request->all();
-			Log::info($inputs);
-		}
-		
-		$system_vars = parent::__construct();
-		$pete_options = $system_vars["pete_options"];
-		$sidebar_options = $system_vars["sidebar_options"];
-		
-		View::share(compact('dashboard_url','viewsw','pete_options','system_vars','sidebar_options'));
-		
-	}
+	public function __construct(Request $request)
+    {
+		//Ensure system vars are loaded
+        parent::__construct();          
+
+        $this->middleware('auth');
+
+        View::share([
+            'dashboard_url' => env('PETE_DASHBOARD_URL'),
+            'viewsw'        => '/import_wordpress'
+        ]);
+    }
   	
-	public function create(){
-		
+	public function create(){	
 		$current_user = Auth::user(); 
-		$viewsw = "/import_wordpress";
-		return view("wordpress-importer-plugin::create",compact('viewsw','current_user'));
+		return view("wordpress-importer-plugin::create",compact('current_user'));
 	}
-	
-	
 	
 	public function store(Request $request)
 	{
-		
-		$current_user = Auth::user();
-		$request_array = $request->all();
-		
-		$validator = Validator::make($request_array, [
-			'url' => 'required|unique:sites',
+		/** ----------------------------------------------------------------
+		 * 1. Validate input
+		 * ---------------------------------------------------------------- */
+		$data = $request->validate([
+			'url'            => [
+				'required',
+				'max:255',
+				// allow letters, numbers, dots & dashes (no protocol)
+				'regex:/^[a-z0-9\-\.]+$/i',
+				Rule::unique('sites', 'url'),
+			],
+			'backup_file'    => ['nullable', 'file', 'mimes:gz,tgz', 'max:102400'], // 100 MB
+			'big_file_route' => ['nullable', 'string'],
 		]);
-		
-		
-		if(isset($request_array["big_file_route"])){
-			$template_file = $request_array["big_file_route"];
-		}else{
-			if($request->file('filem')!= ""){
-				$file = $request->file('filem');
-				// SET UPLOAD PATH
-				$destinationPath = 'uploads';
-				 // GET THE FILE EXTENSION
-				$extension = $file->getClientOriginalExtension();
-				 // RENAME THE UPLOAD WITH RANDOM NUMBER
-				//$fileName = rand(11111, 99999) . '.' . $extension;
-				 // MOVE THE UPLOADED FILES TO THE DESTINATION DIRECTORY
-				//$originalName =  $file->getClientOriginalName();
-				$originalName = rand(11111, 99999) . '.' . $extension;
-				$upload_success = $file->move($destinationPath, $originalName);
-			}
-			
-			$base_path = base_path();
-			$template_file = $base_path . "/public/uploads/" . $originalName;
-			Log::info("template_file:");
-			Log::info($template_file);
+
+		// enforce “one source only”
+		if (blank($data['backup_file']) && blank($data['big_file_route'])) {
+			return back()->withErrors('Upload a backup file or specify a server path.');
 		}
-		
+		if (!blank($data['backup_file']) && !blank($data['big_file_route'])) {
+			return back()->withErrors('Choose either the upload *or* the server path— not both.');
+		}
+
+		/** ----------------------------------------------------------------
+		 * 2. Resolve backup location
+		 * ---------------------------------------------------------------- */
+		if ($file = ($data['backup_file'] ?? null)) {                       // user uploaded a file
+			/** @var UploadedFile $file */
+			$filename = Str::random(40).'.'.$file->getClientOriginalExtension();
+			$stored   = $file->storeAs('wordpress-imports', $filename);      // storage/app/wordpress-imports
+			$templateFile = Storage::path($stored);                          // absolute path
+		} else {                                                            // user gave a server path
+			$templateFile = $data['big_file_route'];
+
+			if (! is_readable($templateFile)) {
+				return back()->withErrors('The specified server file is not readable.');
+			}
+		}
+
+		/** ----------------------------------------------------------------
+		 * 3. Create the Site model & kick off import
+		 * ---------------------------------------------------------------- */
 		$site = new Site();
-		$site->set_url($request->input("url"));
-		
-		$import_params = array_merge(
-		["template" => $template_file,
-		"theme" => "custom", 
-		"user_id" => $current_user->id, 
-		"site_url" => $site->url,
-		"action_name" => "Import"
-		],$request_array);
-		
-		$site->import_wordpress($import_params);
-		
-		return Redirect::to('/sites/'.$site->id .'/edit' .'?success=' . 'true');
-		
-	}	
+		$site->set_url($data['url']);                                       // handles domain template etc.
+
+		$site->import_wordpress([
+			'template'    => $templateFile,
+			'theme'       => 'custom',
+			'user_id'     => auth()->id(),
+			'site_url'    => $site->url,
+			'action_name' => 'Import',
+		]);
+
+		Site::reload_server();                                              // refresh Apache/Nginx conf
+
+		return redirect()
+			->route('sites.logs', $site)                                    // straight to log view
+			->with('status', 'Import kicked off — check logs for progress.');
+	}
 	
 }
