@@ -5,17 +5,15 @@ namespace Pete\WordPressImporter\Http;
 
 use App\Http\Controllers\PeteController;
 use Illuminate\Support\Facades\Auth;
-use App\Site;
 use Illuminate\Http\Request;
-use Validator;
 use Illuminate\Support\Facades\Redirect;
-use Log;
-use View;
-
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Http\UploadedFile;
+use App\Site;
+use Log;
+use View;
 
 class WordPressImporterController extends PeteController
 {
