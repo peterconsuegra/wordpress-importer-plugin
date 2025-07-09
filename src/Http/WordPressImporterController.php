@@ -40,50 +40,60 @@ class WordPressImporterController extends PeteController
 	
 	public function store(Request $request)
 	{
-		/** ----------------------------------------------------------------
-		 * 1. Validate input
-		 * ---------------------------------------------------------------- */
+		/* -----------------------------------------------------------------
+		| 1. Validate incoming data
+		* ----------------------------------------------------------------- */
 		$data = $request->validate([
 			'url'            => [
 				'required',
 				'max:255',
-				// allow letters, numbers, dots & dashes (no protocol)
+				// Allow letters, digits, dots and dashes (no protocol)
 				'regex:/^[a-z0-9\-\.]+$/i',
 				Rule::unique('sites', 'url'),
 			],
-			'backup_file'    => ['nullable', 'file', 'mimes:gz,tgz', 'max:102400'], // 100 MB
+			'backup_file'    => ['nullable', 'file', 'mimes:gz,tgz', 'max:102400'], // ≤100 MB
 			'big_file_route' => ['nullable', 'string'],
 		]);
 
-		// enforce “one source only”
-		if (blank($data['backup_file']) && blank($data['big_file_route'])) {
-			return back()->withErrors('Upload a backup file or specify a server path.');
+		/* -----------------------------------------------------------------
+		| 2. Determine which source was provided
+		* ----------------------------------------------------------------- */
+		/** @var \Illuminate\Http\UploadedFile|null $backupFile */
+		$backupFile = $request->file('backup_file');          // null if not uploaded
+		$serverPath = $data['big_file_route'] ?? null;        // null if not typed
+
+		// Ensure *exactly one* source
+		if (blank($backupFile) && blank($serverPath)) {
+			return back()->withErrors(
+				'Upload a backup file or specify a server path.'
+			);
 		}
-		if (!blank($data['backup_file']) && !blank($data['big_file_route'])) {
-			return back()->withErrors('Choose either the upload *or* the server path— not both.');
+		if (!blank($backupFile) && !blank($serverPath)) {
+			return back()->withErrors(
+				'Choose either the upload *or* the server path — not both.'
+			);
 		}
 
-		/** ----------------------------------------------------------------
-		 * 2. Resolve backup location
-		 * ---------------------------------------------------------------- */
-		if ($file = ($data['backup_file'] ?? null)) {                       // user uploaded a file
-			/** @var UploadedFile $file */
-			$filename = Str::random(40).'.'.$file->getClientOriginalExtension();
-			$stored   = $file->storeAs('wordpress-imports', $filename);      // storage/app/wordpress-imports
-			$templateFile = Storage::path($stored);                          // absolute path
-		} else {                                                            // user gave a server path
-			$templateFile = $data['big_file_route'];
+		/* -----------------------------------------------------------------
+		| 3. Resolve absolute template path
+		* ----------------------------------------------------------------- */
+		if ($backupFile) {                                    // user uploaded a file
+			$filename     = Str::random(40).'.'.$backupFile->getClientOriginalExtension();
+			$stored       = $backupFile->storeAs('wordpress-imports', $filename);
+			$templateFile = Storage::path($stored);           // storage/app/wordpress-imports/…
+		} else {                                              // user typed server path
+			$templateFile = $serverPath;
 
 			if (! is_readable($templateFile)) {
 				return back()->withErrors('The specified server file is not readable.');
 			}
 		}
 
-		/** ----------------------------------------------------------------
-		 * 3. Create the Site model & kick off import
-		 * ---------------------------------------------------------------- */
+		/* -----------------------------------------------------------------
+		| 4. Create Site model & kick off import
+		* ----------------------------------------------------------------- */
 		$site = new Site();
-		$site->set_url($data['url']);                                       // handles domain template etc.
+		$site->set_url($data['url']);                         // handles domain template
 
 		$site->import_wordpress([
 			'template'    => $templateFile,
@@ -93,11 +103,11 @@ class WordPressImporterController extends PeteController
 			'action_name' => 'Import',
 		]);
 
-		Site::reload_server();                                              // refresh Apache/Nginx conf
+		Site::reload_server();                                // refresh vhosts / containers
 
 		return redirect()
-			->route('sites.logs', $site)                                    // straight to log view
-			->with('status', 'Import kicked off — check logs for progress.');
+			->route('sites.logs', $site)                      // jump to live logs
+			->with('status', 'Import started — check the logs for progress.');
 	}
 	
 }
