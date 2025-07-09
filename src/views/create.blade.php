@@ -86,9 +86,9 @@
                         {{-- Upload option --}}
                         <div role="tabpanel" class="tab-pane active" id="upload">
                             <input  type="file"
-                                    name="backup_file"
-                                    class="form-control"
-                                    accept=".tar.gz,.tgz">
+							name="backup_file"
+							class="form-control"
+							accept=".zip,.tar,.gz,.tar.gz,.tgz,application/x-gzip,application/gzip">
                             <small class="help-block text-muted">
                                 Max&nbsp;1 GB. Leave empty if you’ll specify a server path instead.
                             </small>
