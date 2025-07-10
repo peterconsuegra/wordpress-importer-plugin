@@ -9,7 +9,7 @@
         </div>
         <div class="col-md-6 d-flex flex-column justify-content-center">
             <h2 class="mb-1">Import an existing WordPress site</h2>
-            <p class="text-muted mb-0">Bring your backup (.tar.gz) and let Pete handle the rest.</p>
+            <p class="text-muted mb-0">Import WordPress sites in one click — speed up migrations, simplify setup, and get to work instantly with a clean, ready-to-use environment.</p>
         </div>
     </div>
 
