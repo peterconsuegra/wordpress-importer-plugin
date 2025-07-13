@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Http\UploadedFile;
 use App\Site;
+use App\OServer;
 use Log;
 use View;
 
@@ -101,7 +102,7 @@ class WordPressImporterController extends PeteController
 			'action_name' => 'Import',
 		]);
 
-		Site::reload_server();                                // refresh vhosts / containers
+		OServer::reload_server();                                // refresh vhosts / containers
 
 		return redirect()
 			->route('sites.logs', $site)                      // jump to live logs
