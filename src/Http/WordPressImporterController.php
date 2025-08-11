@@ -50,7 +50,7 @@ class WordPressImporterController extends PeteController
 				'regex:/^[a-z0-9\-\.]+$/i',
 				Rule::unique('sites', 'url'),
 			],
-			'backup_file'    => ['nullable', 'file', 'mimes:gz,tgz', 'max:102400'], // ≤100 MB
+			'backup_file'    => ['nullable', 'file', 'mimes:gz,tgz,zip'], 
 			'big_file_route' => ['nullable', 'string'],
 		]);
 

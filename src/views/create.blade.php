@@ -90,7 +90,7 @@
 							class="form-control"
 							accept=".zip,.tar,.gz,.tar.gz,.tgz,application/x-gzip,application/gzip">
                             <small class="help-block text-muted">
-                                Max&nbsp;1 GB. Leave empty if you’ll specify a server path instead.
+                               Leave empty if you’ll specify a server path instead.
                             </small>
                         </div>
 
@@ -107,6 +107,13 @@
                         </div>
                     </div>
                 </div>
+
+                <label class="control-label d-block">Upload size limits</label>
+                <ul>
+                    <li style="font-size: 12px">Production: 1GB / Development: 10GB</li>
+                    <li style="font-size: 12px">For larger archives, either import from a server path or increase upload_max_filesize in php_prod.ini or php_dev.ini and them run: docker compose build --no-cache php && docker compose up -d</li>
+                </ul>
+
 
                 <button type="submit" id="create_button" class="btn btn-primary btn-lg">
                     <span class="glyphicon glyphicon-import"></span> Import
