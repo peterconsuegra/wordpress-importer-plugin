@@ -32,7 +32,7 @@
 
                     {{-- form ------------------------------------------------ --}}
                     <form id="SiteForm"
-                          action="{{ url('/import_wordpress/store') }}"
+                          action="{{ url('/wordpress-importer') }}"
                           method="POST"
                           enctype="multipart/form-data"
                           autocomplete="off">

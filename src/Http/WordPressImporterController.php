@@ -3,7 +3,6 @@
 
 namespace Pete\WordPressImporter\Http;
 
-use App\Http\Controllers\PeteController;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Redirect;
@@ -11,30 +10,28 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Http\UploadedFile;
-use App\Site;
-use App\OServer;
+use App\Models\Site;
 use Log;
 use View;
+use Illuminate\Routing\Controller;
+use App\Services\OServer;
+use App\Services\PeteService;
 
-class WordPressImporterController extends PeteController
+class WordPressImporterController extends Controller
 {
 	
-	public function __construct(Request $request)
+	private PeteService $pete;
+
+    public function __construct(PeteService $pete)
     {
-		//Ensure system vars are loaded
-        parent::__construct();          
-
         $this->middleware('auth');
-
-        View::share([
-            'dashboard_url' => env('PETE_DASHBOARD_URL'),
-            'viewsw'        => '/import_wordpress'
-        ]);
+        $this->pete = $pete;
     }
   	
 	public function create(){	
-		$current_user = Auth::user(); 
-		return view("wordpress-importer-plugin::create",compact('current_user'));
+		$viewsw       = '/wordpress-importer';
+        $currentUser  = Auth::user();
+		return view("wordpress-importer-plugin::create",compact('currentUser','viewsw'));
 	}
 	
 	public function store(Request $request)
