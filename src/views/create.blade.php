@@ -65,6 +65,13 @@
                         </div>
                     @endif
 
+                    <div v-if="ui.formErrors.length" class="alert alert-danger">
+                        <strong>Whoops!</strong> Please fix the following:
+                        <ul class="mb-0">
+                            <li v-for="(msg, i) in ui.formErrors" :key="i">@{{ msg }}</li>
+                        </ul>
+                    </div>
+
                     {{-- form ------------------------------------------------ --}}
                     <form id="SiteForm"
                           :action="routes.store"
@@ -280,126 +287,142 @@
             return;
         }
 
-        createApp({
-            setup() {
-                const routes = reactive({
-                    store: @json(url('/wordpress-importer')),
-                });
+      createApp({
+        setup() {
+            const routes = reactive({ store: @json(url('/wordpress-importer')) });
 
-                const form = reactive({
-                    url: @json(old('url', '')),
-                    source: 'upload', // 'upload' | 'path'
-                    serverPath: @json(old('big_file_route', '')),
-                });
+            const form = reactive({
+            url: @json(old('url', '')),
+            source: 'upload',
+            serverPath: @json(old('big_file_route', '')),
+            });
 
-                const ui = reactive({
-                    fileName: '',
-                    fileSizePretty: '',
-                });
+            const ui = reactive({
+            fileName: '',
+            fileSizePretty: '',
+            formErrors: [],                 // <-- NEW
+            });
 
-                const state = reactive({
-                    isSubmitting: false,
-                    hasProgress: false,
-                    progress: 0,
-                });
+            const state = reactive({
+            isSubmitting: false,
+            hasProgress: false,
+            progress: 0,
+            });
 
-                const fileInput = ref(null);
+            const fileInput = ref(null);
 
-                const canSubmit = computed(() => {
-                    if (!form.url) return false;
-                    if (form.source === 'upload') {
-                        // Optional: allow empty upload here (the server path tab handles the other case)
-                        return true;
-                    }
-                    if (form.source === 'path') {
-                        return !!form.serverPath;
-                    }
-                    return false;
-                });
+            const canSubmit = computed(() => {
+            if (!form.url) return false;
+            if (form.source === 'path') return !!form.serverPath;
+            return true;
+            });
 
-                function onFileChange(e) {
-                    const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
-                    if (!f) {
-                        ui.fileName = '';
-                        ui.fileSizePretty = '';
-                        return;
-                    }
-                    ui.fileName = f.name;
-                    ui.fileSizePretty = humanFileSize(f.size);
-                }
+            function onFileChange(e) {
+            const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+            ui.fileName = f ? f.name : '';
+            ui.fileSizePretty = f ? humanFileSize(f.size) : '';
+            }
 
-                function humanFileSize(bytes) {
-                    const thresh = 1024;
-                    if (Math.abs(bytes) < thresh) { return bytes + ' B'; }
-                    const units = ['KB','MB','GB','TB','PB','EB','ZB','YB'];
-                    let u = -1;
-                    do { bytes /= thresh; ++u; } while (Math.abs(bytes) >= thresh && u < units.length - 1);
-                    return bytes.toFixed(1)+' '+units[u];
-                }
+            function humanFileSize(bytes) {
+            const thresh = 1024; if (Math.abs(bytes) < thresh) return bytes + ' B';
+            const units = ['KB','MB','GB','TB','PB','EB','ZB','YB']; let u = -1;
+            do { bytes /= thresh; ++u; } while (Math.abs(bytes) >= thresh && u < units.length - 1);
+            return bytes.toFixed(1) + ' ' + units[u];
+            }
 
-                onMounted(() => {
-                    const urlField = document.getElementById('url-field');
-                    if (urlField) setTimeout(() => urlField.focus(), 150);
-                });
+            // NEW: tiny helpers
+            function safeParseJSON(text) {
+            try { return JSON.parse(text); } catch { return null; }
+            }
+            function flattenErrors(errObj) {
+            const out = [];
+            Object.values(errObj || {}).forEach(v => {
+                if (Array.isArray(v)) out.push(...v);
+                else if (typeof v === 'string') out.push(v);
+            });
+            return out.length ? out : ['Validation failed.'];
+            }
 
-                function onSubmit() {
-                    if (!canSubmit.value || state.isSubmitting) return;
+            onMounted(() => {
+            const urlField = document.getElementById('url-field');
+            if (urlField) setTimeout(() => urlField.focus(), 150);
+            });
 
-                    // Build the form data from the actual form element to include the CSRF field
-                    const formEl = document.getElementById('SiteForm');
-                    const fd = new FormData(formEl);
+            function onSubmit() {
+            if (!canSubmit.value || state.isSubmitting) return;
 
-                    // If current source is 'path', ensure file input is empty (so no progress bar)
-                    // If 'upload' and a file exists, we’ll show progress.
-                    const file = fileInput.value && fileInput.value.files ? fileInput.value.files[0] : null;
-                    state.isSubmitting = true;
-                    state.hasProgress = !!(file && form.source === 'upload');
-                    state.progress = 0;
+            ui.formErrors = [];                   // <-- clear previous errors
 
-                    // Use XHR to get upload progress & final redirect URL.
-                    const xhr = new XMLHttpRequest();
-                    xhr.open('POST', routes.store, true);
+            const formEl = document.getElementById('SiteForm');
+            const fd = new FormData(formEl);
 
-                    // Upload progress (only fires for file uploads)
-                    if (state.hasProgress && xhr.upload) {
-                        xhr.upload.onprogress = (e) => {
-                            if (!e.lengthComputable) return;
-                            const pct = Math.round((e.loaded / e.total) * 100);
-                            state.progress = Math.min(100, Math.max(0, pct));
-                        };
-                    }
+            const file = fileInput.value && fileInput.value.files ? fileInput.value.files[0] : null;
+            state.isSubmitting = true;
+            state.hasProgress  = !!(file && form.source === 'upload');
+            state.progress     = 0;
 
-                    xhr.onreadystatechange = function() {
-                        if (xhr.readyState === XMLHttpRequest.DONE) {
-                            // If server redirected, responseURL will be final location (logs page)
-                            // Navigate regardless of status if we have a plausible URL.
-                            const target = xhr.responseURL || '{{ route('sites.index') }}';
-                            window.location.assign(target);
-                        }
-                    };
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', routes.store, true);
 
-                    xhr.onerror = function() {
-                        state.isSubmitting = false;
-                        state.hasProgress = false;
-                        state.progress = 0;
-                        alert('Upload failed. Please try again or check server logs.');
-                    };
+            // Make sure the controller returns JSON for XHR
+            xhr.setRequestHeader('Accept', 'application/json');
+            xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
 
-                    xhr.send(fd);
-                }
-
-                return {
-                    routes,
-                    form,
-                    ui,
-                    state,
-                    canSubmit,
-                    fileInput,
-                    onFileChange,
-                    onSubmit,
+            if (state.hasProgress && xhr.upload) {
+                xhr.upload.onprogress = (e) => {
+                if (!e.lengthComputable) return;
+                const pct = Math.round((e.loaded / e.total) * 100);
+                state.progress = Math.min(100, Math.max(0, pct));
                 };
             }
+
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState !== XMLHttpRequest.DONE) return;
+
+                // Success (201/200) → use JSON redirect (preferred) or responseURL fallback
+                if (xhr.status >= 200 && xhr.status < 300) {
+                const json = safeParseJSON(xhr.responseText);
+                const target = (json && json.redirect) || xhr.responseURL || '{{ route('sites.index') }}';
+                window.location.assign(target);
+                return;
+                }
+
+                // Validation error → show messages in-view
+                if (xhr.status === 422) {
+                const json = safeParseJSON(xhr.responseText) || {};
+                ui.formErrors = flattenErrors(json.errors);
+                state.isSubmitting = false;
+                state.hasProgress  = false;
+                state.progress     = 0;
+                return;
+                }
+
+                // Other server error
+                state.isSubmitting = false;
+                state.hasProgress  = false;
+                state.progress     = 0;
+                const json = safeParseJSON(xhr.responseText);
+                const msg  = (json && json.message) || 'The import could not be started. Please try again.';
+                alert(msg);
+            };
+
+            xhr.onerror = function() {
+                state.isSubmitting = false;
+                state.hasProgress  = false;
+                state.progress     = 0;
+                alert('Network error. Please try again.');
+            };
+
+            xhr.send(fd);
+            }
+
+            return {
+            routes, form, ui, state, canSubmit,
+            fileInput, onFileChange, onSubmit,
+            };
+        }
         }).mount('#wpi-app');
+
     };
 
     // If Vue was injected via CDN with defer, wait until it's parsed
