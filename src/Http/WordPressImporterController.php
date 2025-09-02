@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\JsonResponse;
 
 /**
  * Handles the "Import WordPress" flow (form + submission).
@@ -77,125 +78,63 @@ final class WordPressImporterController extends Controller
      *
      * @return RedirectResponse
      */
-    public function store(Request $request): RedirectResponse|\Illuminate\Http\JsonResponse
+    public function store(Request $request): RedirectResponse|JsonResponse
     {
-        // Helper to return JSON when requested (XHR/Accept: application/json), else redirect back
-        $fail = function (string $message, array $errors = [], int $status = 422) use ($request) {
-            if ($request->expectsJson() || $request->ajax()) {
-                return response()->json([
-                    'error'   => true,
-                    'message' => $message,
-                    'errors'  => $errors,
-                ], $status);
-            }
-            return back()->withInput()->withErrors($message);
-        };
+        // 0) Normalize URL with domain template before validating
+        $tpl     = app(PeteOption::class)->get_meta_value('domain_template');
+        $fullUrl = $this->pete->normalizeUrlWithTemplate($request->input('url', ''), (string) $tpl);
+        $input   = array_replace($request->all(), ['url' => $fullUrl]);
 
-        // ---- 0) Normalize + append domain template BEFORE validation -----------------
-        $peteOptions    = app(PeteOption::class);
-        $domainTemplate = (string) ($peteOptions->get_meta_value('domain_template') ?? '');
-
-        // Normalize raw input to a host-like token (no scheme/path), lowercase
-        $rawUrl = (string) $request->input('url', '');
-        $host   = strtolower(trim(preg_replace('#^https?://#i', '', $rawUrl))); // strip scheme
-        $host   = trim($host, " \t\n\r\0\x0B/"); // trim whitespace & trailing slashes
-
-        // If a template exists (and not 'none'), treat the user's input as a subdomain
-        // unless they already provided the full host ending with the template.
-        if ($domainTemplate !== '' && $domainTemplate !== 'none') {
-            $needsAppend = !str_ends_with($host, '.'.$domainTemplate);
-            // Only auto-append when the user typed just a subdomain (no dot present)
-            if ($needsAppend && strpos($host, '.') === false) {
-                $host = "{$host}.{$domainTemplate}";
-            }
-        }
-
-        // Build a payload overriding the incoming 'url' with our normalized/templated host
-        $payload          = $request->all();
-        $payload['url']   = $host;
-
-        // ---- 1) Validate (no auto-redirects) ----------------------------------------
-        $validator = \Illuminate\Support\Facades\Validator::make($payload, [
-            'url'            => [
-                'required',
-                'max:255',
-                'regex:/^[a-z0-9\-\.]+$/i',      // host-like (no scheme/slashes)
-                Rule::unique('sites', 'url'),
-            ],
+        // 1) Validate inputs (no auto-redirects)
+        $v = Validator::make($input, [
+            'url'            => ['required', 'max:255', 'regex:/^[a-z0-9\-\.]+$/i', Rule::unique('sites','url')],
             'backup_file'    => ['nullable', 'file', 'mimes:zip,tar,gz,tgz'],
             'big_file_route' => ['nullable', 'string'],
         ]);
 
-        if ($validator->fails()) {
-            return $fail('Validation failed.', $validator->errors()->toArray(), 422);
+        if ($v->fails()) {
+            return $this->pete->fail($request, 'Validation failed.', $v->errors()->toArray(), 422);
         }
 
-        $data      = $validator->validated();
-        /** @var UploadedFile|null $uploaded */
+        // 2) Enforce XOR: upload OR server path
+        /** @var \Illuminate\Http\UploadedFile|null $uploaded */
         $uploaded  = $request->file('backup_file');
-        $serverRaw = $data['big_file_route'] ?? null;
+        $serverRaw = $input['big_file_route'] ?? null;
 
-        // ---- 2) Enforce XOR for source (upload vs path) ------------------------------
         if (blank($uploaded) && blank($serverRaw)) {
-            return $fail('Upload a backup file or specify a server path.', [
+            return $this->pete->fail($request, 'Upload a backup file or specify a server path.', [
                 'backup_file'    => ['Provide a file or use a server path.'],
                 'big_file_route' => ['Provide a server path or upload a file.'],
             ], 422);
         }
         if (!blank($uploaded) && !blank($serverRaw)) {
-            return $fail('Choose either the upload OR the server path — not both.', [
+            return $this->pete->fail($request, 'Choose either the upload OR the server path — not both.', [
                 'backup_file'    => ['Remove this if using a server path.'],
                 'big_file_route' => ['Remove this if uploading a file.'],
             ], 422);
         }
 
-        // ---- 3) Resolve absolute archive path ---------------------------------------
-        try {
-            if ($uploaded instanceof UploadedFile) {
-                $ext         = (string) $uploaded->getClientOriginalExtension();
-                $filename    = sprintf('%s.%s', Str::random(40), $ext);
-                $stored      = $uploaded->storeAs(self::UPLOAD_DIR, $filename);
-                $templateFile = Storage::path($stored);
-
-                if (!is_file($templateFile) || !is_readable($templateFile)) {
-                    Log::error('Uploaded archive is not readable after store.', [
-                        'path'    => $templateFile,
-                        'user_id' => Auth::id(),
-                    ]);
-                    return $fail('The uploaded file could not be accessed. Please try again.', [
-                        'backup_file' => ['Stored file is not readable.'],
-                    ], 422);
-                }
-            } else {
-                $serverPath   = trim((string) $serverRaw);
-                $real         = @realpath($serverPath);
-                $templateFile = $real ?: $serverPath;
-
-                if (!is_file($templateFile) || !is_readable($templateFile)) {
-                    Log::warning('Server path not readable or not a file.', [
-                        'path'    => $serverPath,
-                        'real'    => $real,
-                        'user_id' => Auth::id(),
-                    ]);
-                    return $fail('The specified server file does not exist or is not readable.', [
-                        'big_file_route' => ['Path does not exist or is not readable.'],
-                    ], 422);
-                }
-            }
-        } catch (\Throwable $e) {
-            Log::error('Failed to resolve template archive for import.', [
-                'exception' => $e,
-                'user_id'   => Auth::id(),
-            ]);
-            return $fail('Failed to access the archive. Please check permissions and try again.', [], 422);
+        // 3) Resolve archive path (uploaded or server file)
+        $templateFile = $this->resolveArchivePath($uploaded, (string) $serverRaw);
+        if (!is_string($templateFile)) {
+            return $this->pete->fail($request, 'Failed to access the archive. Please check permissions and try again.', [], 422);
         }
 
-        // ---- 4) Create site & kick off import ---------------------------------------
-        try {
-            $site = new Site();
-            // We already normalized/templated the URL, so just set it
-            $site->url = $data['url'];
+        // 4) Business guard
+        if ($this->pete->isTheURLForbidden($fullUrl)) {
+            return $this->pete->fail($request, 'URL forbidden.', [
+                'url' => ['This URL is not allowed.'],
+            ], 422);
+        }
 
+        try {
+            // 5) Persist site FIRST so we always have an ID for routing/redirects
+            $site       = new Site();
+            $site->url  = $fullUrl;
+            $site->user_id = Auth::id(); // optional if your schema has this
+            $site->save();
+
+            // 6) Start import
             $site->import_wordpress([
                 'template'    => $templateFile,
                 'theme'       => 'custom',
@@ -204,26 +143,27 @@ final class WordPressImporterController extends Controller
                 'action_name' => 'Import',
             ]);
 
+            // Optionally reload vhosts/containers
             OServer::reload_server();
 
-            Log::info('WordPress import started.', [
-                'site_id'  => $site->id ?? null,
-                'site_url' => $site->url ?? null,
-                'user_id'  => Auth::id(),
-                'source'   => $uploaded instanceof UploadedFile ? 'upload' : 'path',
-            ]);
+            $redirectUrl = route('sites.logs', $site->id);
 
-            $payload = [
-                'error'    => false,
-                'message'  => 'Import started — check the logs for progress.',
-                'site_id'  => $site->id,
-                'redirect' => route('sites.logs', $site),
-            ];
-
-            if ($request->expectsJson() || $request->ajax()) {
-                return response()->json($payload, 201);
+            // Prefer JSON for XHR (Vue sets Accept + X-Requested-With)
+            if ($request->expectsJson() || $request->ajax() || $request->wantsJson()) {
+                return response()
+                    ->json([
+                        'error'    => false,
+                        'message'  => 'Import started — check the logs for progress.',
+                        'site_id'  => $site->id,
+                        'redirect' => $redirectUrl,
+                    ], 200)
+                    ->header('X-Redirect', $redirectUrl); // helpful for frontends
             }
-            return redirect()->route('sites.logs', $site)->with('status', $payload['message']);
+
+            // Non-AJAX fallback
+            return redirect()
+                ->route('sites.logs', $site->id, absolute: false) // relative path => stable in tests/containers
+                ->setStatusCode(303);  
 
         } catch (\Throwable $e) {
             Log::error('WordPress import failed to start.', [
@@ -231,14 +171,46 @@ final class WordPressImporterController extends Controller
                 'user_id'   => Auth::id(),
             ]);
 
-            if ($request->expectsJson() || $request->ajax()) {
-                return response()->json([
-                    'error'   => true,
-                    'message' => 'The import could not be started. Please check server logs and try again.',
-                ], 500);
-            }
-            return back()->withInput()->withErrors('The import could not be started. Please check the server logs and try again.');
+            $msg = 'The import could not be started. Please check server logs and try again.';
+
+            return ($request->expectsJson() || $request->ajax() || $request->wantsJson())
+                ? response()->json(['error' => true, 'message' => $msg], 500)
+                : back()->withInput()->withErrors($msg);
         }
     }
 
+    /**
+     * Returns absolute readable path to the archive (string) or false on failure.
+     */
+    private function resolveArchivePath(?\Illuminate\Http\UploadedFile $uploaded, ?string $serverPath)
+    {
+        try {
+            if ($uploaded) {
+                $ext      = (string) $uploaded->getClientOriginalExtension();
+                $filename = sprintf('%s.%s', Str::random(40), $ext);
+                $stored   = $uploaded->storeAs(self::UPLOAD_DIR, $filename);
+                $path     = Storage::path($stored);
+
+                if (!is_file($path) || !is_readable($path)) {
+                    Log::error('Uploaded archive is not readable after store.', ['path' => $path, 'user_id' => Auth::id()]);
+                    return false;
+                }
+                return $path;
+            }
+
+            $serverPath = trim((string) $serverPath);
+            $real       = @realpath($serverPath);
+            $path       = $real ?: $serverPath;
+
+            if (!is_file($path) || !is_readable($path)) {
+                Log::warning('Server path not readable or not a file.', ['path' => $serverPath, 'real' => $real, 'user_id' => Auth::id()]);
+                return false;
+            }
+            return $path;
+
+        } catch (\Throwable $e) {
+            Log::error('Failed to resolve template archive for import.', ['exception' => $e, 'user_id' => Auth::id()]);
+            return false;
+        }
+    }
 }

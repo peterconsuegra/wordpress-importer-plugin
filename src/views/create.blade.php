@@ -210,7 +210,7 @@
 
                         {{-- Submit (secondary) — primary is in hero -------- --}}
                         <div class="d-grid">
-                            <button type="submit"
+                            <button id="import_wordpress" type="submit"
                                     class="btn btn-primary"
                                     :disabled="!canSubmit || state.isSubmitting"
                                     :class="{'btn-disabled': state.isSubmitting}">
