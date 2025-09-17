@@ -11,13 +11,10 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Route;
 use Pete\WordPressImporter\Http\WordPressImporterController as WpiController;
 
-Route::middleware(['web'])
-    ->prefix('wordpress-importer')
-    ->name('wpi.')
-    ->group(function (): void {
-        // Show the import form
-        Route::get('/', [WpiController::class, 'create'])->name('create');
-
-        // Handle the import submission
-        Route::post('/', [WpiController::class, 'store'])->name('store');
-    });
+Route::middleware('web')->group(function () {
+    Route::get('/wordpress-importer', [WpiController::class, 'create'])->name('wpimport.create');
+    Route::post('/wordpress-importer', [WpiController::class, 'store'])->name('wpimport.store');
+    Route::get('/wordpress-importer/status/{id}', [WpiController::class, 'status'])
+        ->where('id', '[A-Za-z0-9\-]+')
+        ->name('wpimport.status');
+});

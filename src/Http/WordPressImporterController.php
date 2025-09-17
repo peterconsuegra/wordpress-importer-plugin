@@ -49,8 +49,7 @@ final class WordPressImporterController extends Controller
     public function __construct(PeteService $pete)
     {
         // Protect every action with the "auth" middleware.
-        $this->middleware('auth');
-
+        $this->middleware('auth')->except(['status']); 
         $this->pete = $pete;
     }
 
@@ -85,19 +84,18 @@ final class WordPressImporterController extends Controller
         $fullUrl = $this->pete->normalizeUrlWithTemplate($request->input('url', ''), (string) $tpl);
         $input   = array_replace($request->all(), ['url' => $fullUrl]);
 
-        // 1) Validate inputs (no auto-redirects)
+        // 1) Validate (mirror your current rules)
         $v = Validator::make($input, [
             'url'            => ['required', 'max:255', 'regex:/^[a-z0-9\-\.]+$/i', Rule::unique('sites','url')],
             'backup_file'    => ['nullable', 'file', 'mimes:zip,tar,gz,tgz'],
             'big_file_route' => ['nullable', 'string'],
         ]);
-
         if ($v->fails()) {
             return $this->pete->fail($request, 'Validation failed.', $v->errors()->toArray(), 422);
         }
 
         // 2) Enforce XOR: upload OR server path
-        /** @var \Illuminate\Http\UploadedFile|null $uploaded */
+        /** @var UploadedFile|null $uploaded */
         $uploaded  = $request->file('backup_file');
         $serverRaw = $input['big_file_route'] ?? null;
 
@@ -114,7 +112,7 @@ final class WordPressImporterController extends Controller
             ], 422);
         }
 
-        // 3) Resolve archive path (uploaded or server file)
+        // 3) Resolve archive file path
         $templateFile = $this->resolveArchivePath($uploaded, (string) $serverRaw);
         if (!is_string($templateFile)) {
             return $this->pete->fail($request, 'Failed to access the archive. Please check permissions and try again.', [], 422);
@@ -127,57 +125,69 @@ final class WordPressImporterController extends Controller
             ], 422);
         }
 
-        try {
-            // 5) Persist site FIRST so we always have an ID for routing/redirects
-            $site       = new Site();
-            $site->url  = $fullUrl;
-            $site->user_id = Auth::id(); // optional if your schema has this
-            $site->save();
+        // ==== fire-and-return (like clone) ====================================
+        $jobId     = (string) \Illuminate\Support\Str::uuid();
+        $statusDir = storage_path('app/import-jobs');
+        @mkdir($statusDir, 0775, true);
 
-            // 6) Start import
-            $site->import_wordpress([
-                'template'    => $templateFile,
-                'theme'       => 'custom',
-                'user_id'     => Auth::id(),
-                'site_url'    => $site->url,
-                'action_name' => 'Import',
-            ]);
+        // seed queued
+        @file_put_contents("{$statusDir}/{$jobId}.json", json_encode([
+            'status'     => 'queued',
+            'progress'   => 0,
+            'message'    => 'Queued',
+            'created_at' => now()->toISOString(),
+        ], JSON_PRETTY_PRINT));
 
-            // Optionally reload vhosts/containers
-            OServer::reload_server();
+        // Build detached command
+        $php = trim((string) @shell_exec('command -v php 2>/dev/null')) ?: '/usr/bin/php';
+        if (!is_executable($php)) $php = 'php';
 
-            $redirectUrl = route('sites.logs', $site->id);
+        $runner = base_path('bootstrap/run_import.php');
+        $dest   = $fullUrl;
+        $userId = (int) \Auth::id();
 
-            // Prefer JSON for XHR (Vue sets Accept + X-Requested-With)
-            if ($request->expectsJson() || $request->ajax() || $request->wantsJson()) {
-                return response()
-                    ->json([
-                        'error'    => false,
-                        'message'  => 'Import started — check the logs for progress.',
-                        'site_id'  => $site->id,
-                        'redirect' => $redirectUrl,
-                    ], 200)
-                    ->header('X-Redirect', $redirectUrl); // helpful for frontends
-            }
+        $cmd = sprintf(
+            'cd %s && nohup %s %s --dest=%s --user=%d --template=%s --job=%s > /dev/null 2>&1 &',
+            escapeshellarg(base_path()),
+            escapeshellcmd($php),
+            escapeshellarg($runner),
+            escapeshellarg($dest),
+            $userId,
+            escapeshellarg($templateFile),
+            escapeshellarg($jobId)
+        );
+        @shell_exec($cmd);
 
-            // Non-AJAX fallback
-            return redirect()
-                ->route('sites.logs', $site->id, absolute: false) // relative path => stable in tests/containers
-                ->setStatusCode(303);  
+        $payload = [
+            'error'      => false,
+            'message'    => 'Import enqueued.',
+            'job_id'     => $jobId,
+            'status_url' => route('wpimport.status', $jobId),
+        ];
 
-        } catch (\Throwable $e) {
-            Log::error('WordPress import failed to start.', [
-                'exception' => $e,
-                'user_id'   => Auth::id(),
-            ]);
-
-            $msg = 'The import could not be started. Please check server logs and try again.';
-
-            return ($request->expectsJson() || $request->ajax() || $request->wantsJson())
-                ? response()->json(['error' => true, 'message' => $msg], 500)
-                : back()->withInput()->withErrors($msg);
+        // Prefer JSON for XHR
+        if ($request->expectsJson() || $request->ajax() || $request->wantsJson()) {
+            return response()->json($payload, 202);
         }
+
+        // Non-AJAX fallback
+        return redirect()->route('sites.logs', 0)->with('status', $payload['message']);
     }
+
+    /**
+     * Poller endpoint: GET /wordpress-importer/status/{id}
+     */
+    public function status(string $id): \Illuminate\Http\JsonResponse
+    {
+        $path = storage_path("app/import-jobs/{$id}.json");
+        if (!is_file($path)) {
+            return response()->json(['error' => true, 'message' => 'Not found'], 404);
+        }
+        $data = json_decode((string) file_get_contents($path), true) ?: [];
+        // Optional: add ownership checks if desired.
+        return response()->json($data + ['job_id' => $id]);
+    }
+
 
     /**
      * Returns absolute readable path to the archive (string) or false on failure.
