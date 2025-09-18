@@ -20,6 +20,8 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Http\JsonResponse;
+use Pion\Laravel\ChunkUpload\Receiver\FileReceiver;
+use Pion\Laravel\ChunkUpload\Handler\HandlerFactory;
 
 /**
  * Handles the "Import WordPress" flow (form + submission).
@@ -51,6 +53,82 @@ final class WordPressImporterController extends Controller
         // Protect every action with the "auth" middleware.
         $this->middleware('auth')->except(['status']); 
         $this->pete = $pete;
+    }
+
+    /**
+     * Stores chunks to storage/app/wordpress-imports/. On finish returns the ABSOLUTE PATH
+     * so the importer can use the "Server path" branch (big_file_route).
+     */
+    public function upload(Request $request)
+    {
+        // 0) Make sure the chunk root exists (avoid mkdir race)
+        $disk = config('chunk-upload.storage.disk', 'local');
+        $root = config('chunk-upload.storage.chunks', 'chunks');
+        try {
+            if (!Storage::disk($disk)->exists($root)) {
+                Storage::disk($disk)->makeDirectory($root);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Failed ensuring chunk root', ['message' => $e->getMessage()]);
+        }
+
+        // 1) Create the receiver
+        $receiver = new FileReceiver('file', $request, HandlerFactory::classFromRequest($request));
+
+        if (!$receiver->isUploaded()) {
+            return response()->json(['error' => 'No file uploaded.'], 400);
+        }
+
+        // 2) Receive with a tiny retry to dodge mkdir() race
+        $save = null;
+        for ($i = 0; $i < 3; $i++) {
+            try {
+                $save = $receiver->receive();
+                break; // success
+            } catch (\Throwable $e) {
+                if (str_contains($e->getMessage(), 'File exists')) {
+                    usleep(100_000); // 100ms backoff
+                    continue;
+                }
+                throw $e; // different error – bubble up
+            }
+        }
+        if (!$save) {
+            Log::error('Chunk receive failed after retries');
+            return response()->json(['error' => 'Upload failed while preparing chunk.'], 500);
+        }
+
+        if ($save->isFinished()) {
+            $file = $save->getFile();
+            $ext  = $file->getClientOriginalExtension() ?: pathinfo($file->getClientOriginalName(), PATHINFO_EXTENSION);
+            $name = \Illuminate\Support\Str::random(40) . ($ext ? ('.' . strtolower($ext)) : '');
+
+            $storedPath = Storage::disk('local')->putFileAs('wordpress-imports', $file, $name);
+            @unlink($file->getPathname());
+
+            return response()->json([
+                'done'      => true,
+                'filename'  => $name,
+                'path'      => Storage::path($storedPath),
+                'size'      => (int) ($request->input('resumableTotalSize') ?? 0),
+                'stored_as' => $storedPath
+            ]);
+        }
+
+        $handler = $save->handler();
+        return response()->json([
+            'done'       => false,
+            'percentage' => $handler->getPercentageDone(),
+        ]);
+    }
+
+    /**
+     * Optional: allow client to abort and clean partial data (best-effort).
+     */
+    public function abort(Request $request)
+    {
+        // You can also remove partial temp files if your handler leaves any on disk.
+        return response()->json(['ok' => true]);
     }
 
     /**

@@ -259,330 +259,414 @@
 @endpush
 
 @push('scripts')
-{{-- Load Vue 3 from CDN if not already present (safe fallback) --}}
+
+{{-- Resumable.js for chunked uploads --}}
+<script src="https://cdn.jsdelivr.net/npm/resumablejs@1/resumable.min.js"></script>
+
+{{-- Ensure Vue 3 (fallback if not already loaded) --}}
 <script>(function(){
-    if (!window.Vue) {
-        var s = document.createElement('script');
-        s.src = 'https://unpkg.com/vue@3/dist/vue.global.prod.js';
-        s.defer = true;
-        document.head.appendChild(s);
-    }
+  if (!window.Vue) {
+    var s = document.createElement('script');
+    s.src = 'https://unpkg.com/vue@3/dist/vue.global.prod.js';
+    s.defer = true;
+    document.head.appendChild(s);
+  }
 })();</script>
 
 <script>
 (function bootstrapImporter(){
-    const startApp = () => {
-        const { createApp, reactive, computed, onMounted, ref } = window.Vue || {};
+  const startApp = () => {
+    const { createApp, reactive, computed, onMounted, ref, watch } = window.Vue || {};
 
-        // If Vue failed to load, fall back to minimal non-Vue behavior
-        if (!createApp) {
-            const form = document.getElementById('SiteForm');
-            if (!form) return;
+    if (!createApp) return;
 
-            form.addEventListener('submit', function(){
-                document.body.style.cursor = 'wait';
-            });
-            return;
+    createApp({
+      setup() {
+        const routes = reactive({
+          store: @json(url('/wordpress-importer')),
+          chunk: @json(route('wpimport.chunk.upload')),
+          statusBaseLogs: @json(rtrim(route('sites.logs', 0), '/0')),
+          sitesIndex: @json(route('sites.index')),
+        });
+
+        const form = reactive({
+          url: @json(old('url', '')),
+          source: 'upload',
+          serverPath: @json(old('big_file_route', '')),
+        });
+
+        const ui = reactive({
+          fileName: '',
+          fileSizePretty: '',
+          formErrors: [],
+          hasFile: false,
+        });
+
+        const state = reactive({
+          isSubmitting: false,
+          hasProgress: false,
+          progress: 0,
+          usingChunks: false,
+        });
+
+        const fileInput = ref(null);
+
+        const canSubmit = computed(() => {
+          if (!form.url) return false;
+          if (form.source === 'path') return !!form.serverPath?.trim();
+          return ui.hasFile; // upload tab
+        });
+
+        watch(() => form.source, (val) => {
+          ui.formErrors = [];
+          if (val === 'upload') {
+            form.serverPath = '';
+          } else {
+            if (fileInput.value) fileInput.value.value = '';
+            ui.fileName = '';
+            ui.fileSizePretty = '';
+            ui.hasFile = false;
+          }
+        });
+
+        function humanFileSize(bytes) {
+          const thresh = 1024; if (Math.abs(bytes) < thresh) return bytes + ' B';
+          const units = ['KB','MB','GB','TB']; let u = -1;
+          do { bytes /= thresh; ++u; } while (Math.abs(bytes) >= thresh && u < units.length - 1);
+          return bytes.toFixed(1) + ' ' + units[u];
+        }
+        function safeParseJSON(t){ try { return JSON.parse(t); } catch { return null; } }
+        function flattenErrors(e){
+          const out = [];
+          Object.values(e||{}).forEach(v => Array.isArray(v) ? out.push(...v) : (typeof v === 'string' && out.push(v)));
+          return out.length ? out : ['Validation failed.'];
+        }
+        function setTerminalStatus(id, kind){
+          const s = document.querySelector(`[data-toast-id="${id}"] .terminal-status`);
+          if (!s) return;
+          s.classList.remove('terminal-status--success','terminal-status--error','terminal-status--warning');
+          if (kind) s.classList.add(`terminal-status--${kind}`);
+          s.textContent = (kind||'').toUpperCase();
+        }
+        function forceSameOrigin(u){
+          try{
+            const p = new URL(String(u||''), window.location.origin);
+            return p.origin === window.location.origin ? p.href : (window.location.origin + p.pathname + p.search + p.hash);
+          }catch{ return String(u||'/'); }
         }
 
-        createApp({
-            setup() {
-                const routes = reactive({ store: @json(url('/wordpress-importer')) });
+        function onFileChange(e){
+          const f = e.target.files?.[0] || null;
+          ui.fileName = f ? f.name : '';
+          ui.fileSizePretty = f ? humanFileSize(f.size) : '';
+          ui.hasFile = !!f;
+          if (f && f.size > (2*1024*1024*1024)) window.toast?.('Large file detected. Upload will resume if interrupted ✨','warning',5000);
+        }
 
-                const form = reactive({
-                    url: @json(old('url', '')),
-                    source: 'upload', // 'upload' | 'path'
-                    serverPath: @json(old('big_file_route', '')),
-                });
+        onMounted(() => {
+          setTimeout(() => document.getElementById('url-field')?.focus(), 150);
+          initChunkUploader();
+        });
 
-                const ui = reactive({
-                    fileName: '',
-                    fileSizePretty: '',
-                    formErrors: [],
-                });
+        // ============ CHUNK UPLOADER ============
+        let resumable = null;
+        let resumableFile = null;
+        let termIdUpload = null;
 
-                const state = reactive({
-                    isSubmitting: false,
-                    hasProgress: false,
-                    progress: 0,
-                });
+        function initChunkUploader(){
+          if (!window.Resumable || !fileInput.value) return;
+          const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 
-                const fileInput = ref(null);
+          resumable = new Resumable({
+            target: routes.chunk,
+            chunkSize: 8 * 1024 * 1024,
+            simultaneousUploads: 1,     // ← prevent mkdir() races in Pion
+            testChunks: false,          // ← our route doesn't implement the probe
+            throttleProgressCallbacks: 1,
+            maxChunkRetries: 5,
+            permanentErrors: [400,401,403,404,409,413,415,422,500,501],
+            headers: { 'X-CSRF-TOKEN': csrf },
+            query: {}
+            });
 
-                const canSubmit = computed(() => {
-                    if (!form.url) return false;
-                    if (form.source === 'path') return !!form.serverPath;
-                    // upload can be submitted without pre-selecting a file (server will validate XOR)
-                    return true;
-                });
 
-                function onFileChange(e) {
-                    const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
-                    ui.fileName = f ? f.name : '';
-                    ui.fileSizePretty = f ? humanFileSize(f.size) : '';
-                }
+          resumable.assignBrowse(fileInput.value);
 
-                function humanFileSize(bytes) {
-                    const thresh = 1024; if (Math.abs(bytes) < thresh) return bytes + ' B';
-                    const units = ['KB','MB','GB','TB','PB','EB','ZB','YB']; let u = -1;
-                    do { bytes /= thresh; ++u; } while (Math.abs(bytes) >= thresh && u < units.length - 1);
-                    return bytes.toFixed(1) + ' ' + units[u];
-                }
+          resumable.on('fileAdded', (file) => {
+            resumableFile = file;
+            ui.fileName = file.fileName || file.relativePath || file.uniqueIdentifier;
+            ui.fileSizePretty = humanFileSize(file.size);
+            ui.hasFile = true;
+          });
 
-                // --- helpers ---------------------------------------------------
-                function safeParseJSON(text) { try { return JSON.parse(text); } catch { return null; } }
-                function flattenErrors(errObj) {
-                    const out = [];
-                    Object.values(errObj || {}).forEach(v => {
-                        if (Array.isArray(v)) out.push(...v);
-                        else if (typeof v === 'string') out.push(v);
-                    });
-                    return out.length ? out : ['Validation failed.'];
-                }
+          resumable.on('fileProgress', (file) => {
+            if (!state.usingChunks) return;
+            state.progress = Math.round(file.progress() * 100);
+          });
 
-                function setTerminalStatus(termId, kind /* success|error|warning|'' */) {
-                    const statusEl = document.querySelector(`[data-toast-id="${termId}"] .terminal-status`);
-                    if (statusEl) {
-                        statusEl.classList.remove('terminal-status--success','terminal-status--error','terminal-status--warning');
-                        if (kind) statusEl.classList.add(`terminal-status--${kind}`);
-                        statusEl.textContent = (kind || '').toUpperCase();
-                    }
-                }
+          resumable.on('fileError', (file, message) => {
+            state.isSubmitting = false;
+            state.hasProgress  = false;
+            state.usingChunks  = false;
+            state.progress     = 0;
 
-                // 🔒 Force a URL to same-origin (important for auth cookies)
-                function forceSameOrigin(u) {
-                    try {
-                        const parsed = new URL(String(u || ''), window.location.origin);
-                        if (parsed.origin === window.location.origin) return parsed.href;
-                        return window.location.origin + parsed.pathname + parsed.search + parsed.hash;
-                    } catch {
-                        // If URL constructor fails, fallback to path-ish string
-                        return String(u || '/');
-                    }
-                }
+            let msg = 'Upload failed.';
+            try { const j = JSON.parse(message); if (j?.error) msg = j.error; } catch {}
+            if (String(message).match(/\b413\b/)) msg = 'Upload rejected (HTTP 413). Check upstream body limits.';
 
-                onMounted(() => {
-                    const urlField = document.getElementById('url-field');
-                    if (urlField) setTimeout(() => urlField.focus(), 150);
-                });
-
-                function onSubmit() {
-                    if (!canSubmit.value || state.isSubmitting) return;
-
-                    ui.formErrors = [];
-                    const formEl = document.getElementById('SiteForm');
-                    const fd = new FormData(formEl);
-
-                    const file = fileInput.value && fileInput.value.files ? fileInput.value.files[0] : null;
-                    state.isSubmitting = true;
-                    state.hasProgress  = !!(file && form.source === 'upload');
-                    state.progress     = 0;
-
-                    // Terminal toast — like submitClone()
-                    const destLabel = form.url || '(new site)';
-                    const termId = window.toastTerminal(
-                        `▶ Starting import for ${destLabel}`,
-                        { title: `Import • ${destLabel}`, delay: 0, theme: 'light', autoScroll: true }
-                    );
-                    const tAppend = (line='') => window.toastTerminalAppend?.(termId, line);
-
-                    // Use XHR for upload progress (then switch to fetch for polling)
-                    const xhr = new XMLHttpRequest();
-                    xhr.open('POST', routes.store, true);
-                    xhr.setRequestHeader('Accept', 'application/json');
-                    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-
-                    if (state.hasProgress && xhr.upload) {
-                        xhr.upload.onprogress = (e) => {
-                            if (!e.lengthComputable) return;
-                            const pct = Math.round((e.loaded / e.total) * 100);
-                            state.progress = Math.min(100, Math.max(0, pct));
-                        };
-                        tAppend('→ Uploading backup…');
-                    } else {
-                        tAppend('→ Enqueuing import…');
-                    }
-
-                    xhr.onreadystatechange = async function() {
-                        if (xhr.readyState !== XMLHttpRequest.DONE) return;
-
-                        const status = xhr.status;
-                        const respText = xhr.responseText || '';
-                        const json = safeParseJSON(respText) || {};
-
-                        // Success (202 Accepted from controller)
-                        if (status >= 200 && status < 300) {
-                            const jobId = json.job_id;
-                            const statusUrl = json.status_url;
-
-                            if (!jobId || !statusUrl) {
-                                // Unexpected: we didn't get polling info
-                                tAppend('✖ Server did not return a status URL.');
-                                setTerminalStatus(termId, 'error');
-                                window.toast?.('Import enqueue failed. Please try again.', 'error');
-                                state.isSubmitting = false;
-                                state.hasProgress = false;
-                                state.progress = 0;
-                                return;
-                            }
-
-                            // 🔒 Enforce same-origin URL for polling
-                            const statusUrlSafe = forceSameOrigin(statusUrl);
-
-                            // Begin polling (like clone)
-                            tAppend(`▶ Import enqueued (job ${jobId})`);
-                            setTerminalStatus(termId, ''); // clear
-
-                            try {
-                                let lastProgress = null;
-                                let lastMessage  = null;
-                                let heartbeat    = 0;
-
-                                while (true) {
-                                    await new Promise(r => setTimeout(r, 700));
-
-                                    const r = await fetch(statusUrlSafe, {
-                                        method: 'GET',
-                                        credentials: 'same-origin',
-                                        headers: { 'Accept':'application/json', 'X-Requested-With':'XMLHttpRequest' }
-                                    });
-
-                                    if (!r.ok) {
-                                        heartbeat++;
-                                        if (heartbeat % 5 === 0) tAppend('…'); // heartbeat every ~3.5s
-                                        // 401/419 could happen if session expired; bubble visually but keep trying a bit
-                                        if (r.status === 401 || r.status === 419) {
-                                            tAppend(`Auth check failed (HTTP ${r.status}). Make sure you are logged in on this host.`);
-                                        }
-                                        continue;
-                                    }
-
-                                    const st = await r.json().catch(() => ({}));
-                                    const p  = (typeof st.progress === 'number') ? st.progress : null;
-                                    const m  = st.message || '';
-
-                                    if (p !== lastProgress && p != null) {
-                                        tAppend(`Progress: ${p}%`);
-                                        lastProgress = p;
-                                        heartbeat = 0;
-                                    }
-                                    if (m && m !== lastMessage) {
-                                        tAppend(m);
-                                        lastMessage = m;
-                                        heartbeat = 0;
-                                    }
-                                    if (!m && p == null) {
-                                        heartbeat++;
-                                        if (heartbeat % 5 === 0) tAppend('…');
-                                    }
-
-                                    if (st.status === 'succeeded') {
-                                        tAppend('✔ Import completed.');
-                                        setTerminalStatus(termId, 'success');
-                                        window.toast?.('Import completed.', 'success');
-
-                                        // If the runner provides dest_site_id, go to its logs
-                                        if (st.dest_site_id) {
-                                            const logsBase = @json(rtrim(route('sites.logs', 0), '/0'));
-                                            window.location.assign(`${logsBase}/${st.dest_site_id}`);
-                                        } else if (st.redirect) {
-                                            window.location.assign(String(st.redirect));
-                                        } else {
-                                            // Fallback: go to sites index or generic logs
-                                            window.location.assign(@json(route('sites.index')));
-                                        }
-                                        return;
-                                    }
-
-                                    if (st.status === 'failed') {
-                                        const msg = st.message || 'Import failed.';
-                                        tAppend(`✖ ${msg}`);
-                                        setTerminalStatus(termId, 'error');
-                                        window.toast?.(msg, 'error');
-                                        state.isSubmitting = false;
-                                        state.hasProgress = false;
-                                        state.progress = 0;
-                                        return;
-                                    }
-                                }
-                            } catch (pollErr) {
-                                tAppend('✖ Network error while polling import status.');
-                                setTerminalStatus(termId, 'error');
-                                window.toast?.('Network error. Please try again.', 'error');
-                                state.isSubmitting = false;
-                                state.hasProgress = false;
-                                state.progress = 0;
-                            }
-
-                            return; // ensure we don’t fall through
-                        }
-
-                        // Validation error → show inline list and terminal toast
-                        if (status === 422) {
-                            const errs = flattenErrors(json.errors);
-                            ui.formErrors = errs;
-                            tAppend(`✖ ${json.message || 'Validation failed.'}`);
-                            errs.forEach(msg => tAppend(`• ${msg}`));
-                            setTerminalStatus(termId, 'error');
-
-                            state.isSubmitting = false;
-                            state.hasProgress  = false;
-                            state.progress     = 0;
-                            return;
-                        }
-
-                        // Unauthorized/Forbidden
-                        if (status === 401 || status === 403) {
-                            const msg = json.message || 'You are not allowed to import a site.';
-                            tAppend(`✖ ${msg}`);
-                            setTerminalStatus(termId, 'error');
-                            window.toast?.(msg, 'error');
-
-                            state.isSubmitting = false;
-                            state.hasProgress  = false;
-                            state.progress     = 0;
-                            return;
-                        }
-
-                        // Other server error
-                        const fallbackMsg = (json && json.message) || 'The import could not be started. Please try again.';
-                        tAppend(`✖ ${fallbackMsg}`);
-                        setTerminalStatus(termId, 'error');
-                        window.toast?.(fallbackMsg, 'error');
-
-                        state.isSubmitting = false;
-                        state.hasProgress  = false;
-                        state.progress     = 0;
-                    };
-
-                    xhr.onerror = function() {
-                        tAppend('✖ Network error while enqueuing the import.');
-                        setTerminalStatus(termId, 'error');
-                        window.toast?.('Network error. Please try again.', 'error');
-                        state.isSubmitting = false;
-                        state.hasProgress  = false;
-                        state.progress     = 0;
-                    };
-
-                    xhr.send(fd);
-                }
-
-                return {
-                    routes, form, ui, state, canSubmit,
-                    fileInput, onFileChange, onSubmit,
-                };
+            if (termIdUpload) {
+              window.toastTerminalAppend?.(termIdUpload, `✖ ${msg}`);
+              setTerminalStatus(termIdUpload, 'error');
             }
-        }).mount('#wpi-app');
+            window.toast?.(msg, 'error', 6000);
+          });
 
-    };
+          resumable.on('fileSuccess', (file, message) => {
+            let data = {};
+            try { data = JSON.parse(message || '{}'); } catch {}
+            if (!data.path || !data.done) {
+              if (termIdUpload) {
+                window.toastTerminalAppend?.(termIdUpload, '✖ Server did not return the assembled file path.');
+                setTerminalStatus(termIdUpload, 'error');
+              }
+              window.toast?.('Upload finished but file path missing. Try “Server path”.', 'error');
+              state.isSubmitting = false; state.hasProgress = false; state.usingChunks = false; state.progress = 0;
+              return;
+            }
 
-    // If Vue was injected via CDN with defer, wait until it's parsed
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', startApp);
-    } else {
-        startApp();
-    }
+            form.source    = 'path';
+            form.serverPath = data.path;
+
+            if (termIdUpload) {
+              window.toastTerminalAppend?.(termIdUpload, '→ Upload finished. Starting server-side import…');
+              setTerminalStatus(termIdUpload, '');
+            }
+
+            enqueueImportWithServerPath(data.path, termIdUpload);
+          });
+        }
+
+        // ============ ENQUEUE + POLL ============
+        async function pollJob(statusUrlSafe, termId){
+          try {
+            let lastProgress = null, lastMessage = null, heartbeat = 0;
+            for(;;){
+              await new Promise(r => setTimeout(r, 700));
+              const r = await fetch(statusUrlSafe, { method:'GET', credentials:'same-origin',
+                headers:{ 'Accept':'application/json','X-Requested-With':'XMLHttpRequest' } });
+              if (!r.ok) {
+                heartbeat++; if (heartbeat % 5 === 0) window.toastTerminalAppend?.(termId,'…');
+                if (r.status === 401 || r.status === 419) window.toastTerminalAppend?.(termId, `Auth check failed (HTTP ${r.status}).`);
+                continue;
+              }
+              const st = await r.json().catch(() => ({}));
+              const p = (typeof st.progress === 'number') ? st.progress : null;
+              const m = st.message || '';
+
+              if (p !== lastProgress && p != null) { window.toastTerminalAppend?.(termId, `Progress: ${p}%`); lastProgress = p; heartbeat = 0; }
+              if (m && m !== lastMessage){ window.toastTerminalAppend?.(termId, m); lastMessage = m; heartbeat = 0; }
+              if (!m && p == null){ heartbeat++; if (heartbeat % 5 === 0) window.toastTerminalAppend?.(termId,'…'); }
+
+              if (st.status === 'succeeded') {
+                window.toastTerminalAppend?.(termId, '✔ Import completed.');
+                setTerminalStatus(termId, 'success');
+                window.toast?.('Import completed.', 'success');
+                if (st.site_id)      window.location.assign(`${routes.statusBaseLogs}/${st.site_id}`);
+                else if (st.redirect) window.location.assign(String(st.redirect));
+                else                  window.location.assign(routes.sitesIndex);
+                return;
+              }
+              if (st.status === 'failed') {
+                const msg = st.message || 'Import failed.';
+                window.toastTerminalAppend?.(termId, `✖ ${msg}`);
+                setTerminalStatus(termId, 'error');
+                window.toast?.(msg, 'error');
+                state.isSubmitting = false; state.hasProgress=false; state.usingChunks=false; state.progress=0;
+                return;
+              }
+            }
+          } catch {
+            window.toastTerminalAppend?.(termId, '✖ Network error while polling import status.');
+            setTerminalStatus(termId, 'error');
+            window.toast?.('Network error. Please try again.', 'error');
+            state.isSubmitting=false; state.hasProgress=false; state.usingChunks=false; state.progress=0;
+          }
+        }
+
+        function enqueueImportWithServerPath(path, termId){
+          const fd = new FormData();
+          fd.append('_token', document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '');
+          fd.append('url', form.url || '');
+          fd.append('big_file_route', path);
+
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', routes.store, true);
+          xhr.setRequestHeader('Accept', 'application/json');
+          xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+
+          xhr.onreadystatechange = function(){
+            if (xhr.readyState !== XMLHttpRequest.DONE) return;
+            const status = xhr.status;
+            const json = safeParseJSON(xhr.responseText || '') || {};
+            if (status >= 200 && status < 300) {
+              const jobId = json.job_id, statusUrl = json.status_url;
+              if (!jobId || !statusUrl) {
+                window.toastTerminalAppend?.(termId, '✖ Server did not return a status URL.');
+                setTerminalStatus(termId, 'error');
+                window.toast?.('Import enqueue failed. Please try again.','error');
+                state.isSubmitting=false; state.hasProgress=false; state.usingChunks=false; state.progress=0;
+                return;
+              }
+              window.toastTerminalAppend?.(termId, `▶ Import enqueued (job ${jobId})`);
+              pollJob(forceSameOrigin(statusUrl), termId);
+              return;
+            }
+            if (status === 422) {
+              const errs = flattenErrors(json.errors); ui.formErrors = errs;
+              window.toastTerminalAppend?.(termId, `✖ ${json.message || 'Validation failed.'}`);
+              errs.forEach(m => window.toastTerminalAppend?.(termId, `• ${m}`));
+              setTerminalStatus(termId, 'error');
+            } else {
+              window.toastTerminalAppend?.(termId, `✖ ${(json && json.message) || 'The import could not be started.'}`);
+              setTerminalStatus(termId,'error'); window.toast?.('Import failed to start.','error');
+            }
+            state.isSubmitting=false; state.hasProgress=false; state.usingChunks=false; state.progress=0;
+          };
+
+          xhr.onerror = function(){
+            window.toastTerminalAppend?.(termId, '✖ Network error while enqueuing the import.');
+            setTerminalStatus(termId, 'error'); window.toast?.('Network error. Please try again.','error');
+            state.isSubmitting=false; state.hasProgress=false; state.usingChunks=false; state.progress=0;
+          };
+
+          xhr.send(fd);
+        }
+
+        // ============ SUBMIT ============
+        function onSubmit(){
+          if (!canSubmit.value || state.isSubmitting) return;
+          ui.formErrors = [];
+
+          // Require a file on Upload tab
+          if (form.source === 'upload' && !ui.hasFile) {
+            ui.formErrors = ['Select a backup file or switch to “Server path”.'];
+            window.toast?.('Select a backup file or switch to “Server path”.','warning',4000);
+            return;
+          }
+
+          // Prefer CHUNKED flow when possible (don’t rely on DOM file list)
+          if (form.source === 'upload' && ui.hasFile && resumable) {
+            const nativeFile = fileInput.value?.files?.[0];
+            if (!resumableFile && nativeFile) {
+              try { resumable.addFile(nativeFile); } catch {}
+            }
+            state.isSubmitting = true;
+            state.hasProgress  = true;
+            state.usingChunks  = true;
+            state.progress     = 0;
+
+            const destLabel = form.url || '(new site)';
+            termIdUpload = window.toastTerminal(
+              `▶ Uploading ${ui.fileName || nativeFile?.name || 'backup'}`,
+              { title:`Import • ${destLabel}`, delay:0, theme:'light', autoScroll:true }
+            );
+            window.toastTerminalAppend?.(termIdUpload, '→ Streaming in chunks (resume enabled)…');
+
+            resumable.upload();
+            return; // stop here; enqueueImportWithServerPath will run after chunk finish
+          }
+
+          // Fallback: DIRECT upload (explicitly append file)
+          const formEl = document.getElementById('SiteForm');
+          const fd = new FormData(formEl);
+
+          if (form.source === 'upload') {
+            const f = fileInput.value?.files?.[0] || null;
+            if (!f) {
+              ui.formErrors = ['Could not read the selected file. Try re-selecting it.'];
+              window.toast?.('Could not read the selected file.','error');
+              return;
+            }
+            fd.set('backup_file', f, f.name); // <- make sure the server gets the file
+            fd.delete('big_file_route');       // <- avoid sending an empty string field
+          }
+
+          state.isSubmitting = true;
+          state.hasProgress  = false;
+          state.progress     = 0;
+
+          const destLabel = form.url || '(new site)';
+          const termId = window.toastTerminal(
+            `▶ Starting import for ${destLabel}`,
+            { title:`Import • ${destLabel}`, delay:0, theme:'light', autoScroll:true }
+          );
+          const tAppend = (line='') => window.toastTerminalAppend?.(termId, line);
+
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', routes.store, true);
+          xhr.setRequestHeader('Accept','application/json');
+          xhr.setRequestHeader('X-Requested-With','XMLHttpRequest');
+
+          tAppend('→ Enqueuing import…');
+
+          xhr.onreadystatechange = function(){
+            if (xhr.readyState !== XMLHttpRequest.DONE) return;
+            const status = xhr.status;
+            const json = safeParseJSON(xhr.responseText || '') || {};
+
+            if (status >= 200 && status < 300) {
+              const { job_id, status_url } = json;
+              if (!job_id || !status_url) {
+                tAppend('✖ Server did not return a status URL.');
+                setTerminalStatus(termId,'error'); window.toast?.('Import enqueue failed.','error');
+                state.isSubmitting=false; return;
+              }
+              tAppend(`▶ Import enqueued (job ${job_id})`);
+              pollJob(forceSameOrigin(status_url), termId);
+              return;
+            }
+
+            if (status === 413) {
+              tAppend('✖ Upload rejected: file too large for server limits (HTTP 413).');
+              ui.formErrors = [
+                'The file exceeds the server’s current upload limit.',
+                'Recommended: Use “Server path” or chunked upload.'
+              ];
+              setTerminalStatus(termId,'error'); window.toast?.('Upload too large.','error');
+            } else if (status === 422) {
+              const errs = flattenErrors(json.errors); ui.formErrors = errs;
+              tAppend(`✖ ${json.message || 'Validation failed.'}`); errs.forEach(m => tAppend(`• ${m}`));
+              setTerminalStatus(termId,'error');
+            } else if (status === 401 || status === 403) {
+              const msg = json.message || 'You are not allowed to import a site.';
+              tAppend(`✖ ${msg}`); setTerminalStatus(termId,'error'); window.toast?.(msg,'error');
+            } else {
+              const msg = (json && json.message) || 'The import could not be started. Please try again.';
+              tAppend(`✖ ${msg}`); setTerminalStatus(termId,'error'); window.toast?.(msg,'error');
+            }
+
+            state.isSubmitting=false; state.hasProgress=false; state.progress=0;
+          };
+
+          xhr.onerror = function(){
+            tAppend('✖ Network error while enqueuing the import.');
+            setTerminalStatus(termId,'error'); window.toast?.('Network error. Please try again.','error');
+            state.isSubmitting=false; state.hasProgress=false; state.progress=0;
+          };
+
+          xhr.send(fd);
+        }
+
+        return { routes, form, ui, state, canSubmit, fileInput, onFileChange, onSubmit };
+      }
+    }).mount('#wpi-app');
+  };
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startApp);
+  else startApp();
 })();
 </script>
+
+
 @endpush
 
