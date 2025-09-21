@@ -163,11 +163,26 @@ final class WordPressImporterController extends Controller
         $input   = array_replace($request->all(), ['url' => $fullUrl]);
 
         // 1) Validate (mirror your current rules)
-        $v = Validator::make($input, [
-            'url'            => ['required', 'max:255', 'regex:/^[a-z0-9\-\.]+$/i', Rule::unique('sites','url')],
-            'backup_file'    => ['nullable', 'file', 'mimes:zip,tar,gz,tgz'],
-            'big_file_route' => ['nullable', 'string'],
-        ]);
+        $v = \Validator::make(
+            $input,
+            [
+                'url'            => [
+                    'required',
+                    'max:255',
+                    'regex:/^(?!\-)(?:[a-z0-9\-]+\.)+[a-z]{2,}$/i',
+                    \Illuminate\Validation\Rule::unique('sites', 'url'),
+                ],
+                'backup_file'    => ['nullable', 'file', 'mimes:zip,tar,gz,tgz'],
+                'big_file_route' => ['nullable', 'string'],
+            ],
+            [
+                'url.regex' => 'Please enter a valid domain, e.g. mysite.com or sub.mysite.org',
+            ],
+            [
+                'url' => 'destination URL',
+            ]
+        );
+        
         if ($v->fails()) {
             return $this->pete->fail($request, 'Validation failed.', $v->errors()->toArray(), 422);
         }

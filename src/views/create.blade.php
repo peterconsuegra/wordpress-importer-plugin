@@ -201,11 +201,8 @@
 
                         {{-- Notes ------------------------------------------ --}}
                         <div class="mb-4">
-                            <label class="form-label d-block">Upload size limits</label>
-                            <ul class="mb-0 text-muted small">
-                                <li>Production: 1&nbsp;GB &nbsp;/&nbsp; Development: 10&nbsp;GB</li>
-                                <li>For larger archives, import from a server path or increase <code>upload_max_filesize</code> in <code>php_prod.ini</code> / <code>php_dev.ini</code>, then run: <code>docker compose build --no-cache php && docker compose up -d</code>.</li>
-                            </ul>
+                            <label class="form-label d-block">Pete supports virtually any archive size with resumable uploads that can continue even if your connection drops.
+For especially large archives, you can also import directly from a server path.</label>
                         </div>
 
                         {{-- Submit (secondary) — primary is in hero -------- --}}
